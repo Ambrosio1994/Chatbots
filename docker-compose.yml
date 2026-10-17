@@ -1,0 +1,35 @@
+name: chatbots
+
+services:
+  chatbasico:
+    build: ./chatbasico
+    image: chatbots/chatbasico:latest
+    ports:
+      - "8501:8501"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-5-5}
+      ANTHROPIC_TEMPERATURE: ${ANTHROPIC_TEMPERATURE:-0.0}
+
+  chat-com-url:
+    build: ./chat_com_url
+    image: chatbots/chat-com-url:latest
+    ports:
+      - "8502:8501"
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-5-5}
+      TAVILY_MAX_RESULTS: ${TAVILY_MAX_RESULTS:-3}
+
+  ollama-reasoning:
+    build: ./ollama_reasoning
+    image: chatbots/ollama-reasoning:latest
+    ports:
+      - "8503:8501"
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-deepseek-r1:1.5b}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_TEMPERATURE: ${OLLAMA_TEMPERATURE:-0.6}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
