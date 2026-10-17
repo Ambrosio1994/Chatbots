@@ -1,46 +1,79 @@
-# 🦙 ChatBot Basic With Llama Index
+# 🦙 Chatbot Básico (LlamaIndex + Anthropic)
 
-Este projeto é um chatbot interativo construído com **Streamlit** e **Llama Index**, utilizando o modelo de linguagem **Anthropic Claude** para fornecer respostas precisas e relevantes. O chatbot é projetado para responder em **português brasileiro**, com limite de três parágrafos por resposta, e permite ajustar a criatividade das respostas por meio do controle de temperatura.
-
----
-
-## 📜 Descrição
-
-O **ChatBot Basic With Llama Index** oferece uma interface simples e amigável para interagir com um modelo de linguagem poderoso. Ele é ideal para explorar perguntas em um ambiente dinâmico e ajustável, garantindo respostas otimizadas e adaptadas ao contexto do usuário.
-
-### Recursos:
-- **Respostas Limitadas**: Responde em até 3 parágrafos para manter a objetividade.
-- **Configuração de Temperatura**: Controle a criatividade das respostas do modelo.
-- **Histórico de Conversas**: Mantenha o contexto com um histórico interativo.
-- **Botão de Limpeza**: Redefina o histórico de conversas a qualquer momento.
-
----
+Chatbot conversacional construído com **Streamlit**, **LlamaIndex** e os modelos
+**Anthropic Claude**. Responde em português do Brasil, mantém o histórico da
+conversa e permite ajustar a criatividade das respostas em tempo real.
 
 ## ✨ Funcionalidades
 
-1. **Respostas Inteligentes**:
-   - O chatbot utiliza o modelo **Claude** da **Anthropic** para gerar respostas precisas e contextuais.
-   - Todas as respostas são fornecidas em **português brasileiro**.
+- **Respostas em streaming** — o texto aparece à medida que é gerado.
+- **Memória de conversa** — o histórico é reenviado ao modelo a cada turno.
+- **Controle de temperatura** — slider no menu lateral (0.0 a 1.0).
+- **Seleção de modelo** — escolha entre os modelos Claude disponíveis.
+- **Limpar conversa** — reinicia a sessão com um clique.
+- **Tratamento de erros** — falhas de API são exibidas de forma amigável.
 
-2. **Configuração Dinâmica**:
-   - Controle a criatividade do modelo ajustando a **temperatura** entre 0.0 e 1.0.
+## 🏗️ Arquitetura
 
-3. **Histórico de Conversas**:
-   - Visualize todas as interações anteriores diretamente no chat.
+```
+chatbasico/
+├── app.py                    # Ponto de entrada do Streamlit
+├── chatbasico/
+│   ├── config.py             # Settings via variáveis de ambiente
+│   ├── prompts.py            # Prompt do sistema
+│   ├── llm.py                # Criação do cliente + geração/streaming
+│   ├── utils.py              # Helpers puros (testáveis)
+│   └── ui.py                 # Camada Streamlit
+├── tests/                    # Testes com pytest
+├── requirements.txt
+├── requirements-dev.txt
+├── pyproject.toml            # Configuração de ruff e pytest
+└── Dockerfile
+```
 
-4. **Redefinição do Chat**:
-   - Limpe o histórico de mensagens com um único clique.
+A lógica de LLM (`llm.py`) não conhece o Streamlit, o que permite testá-la com
+um cliente falso e sem chamadas de rede.
 
----
+## 🛠️ Pré-requisitos
 
-## 📋 Requisitos
+- Python 3.11+
+- Uma chave de API da [Anthropic](https://console.anthropic.com/)
 
-Certifique-se de ter os seguintes itens configurados:
+## 🚀 Como rodar
 
-- **Python 3.9+**
-- **Bibliotecas Python**:
-  - `streamlit`
-  - `llama-index`
-  - `python-dotenv`
-    
----
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt
+cp .env.example .env            # preencha ANTHROPIC_API_KEY
+streamlit run app.py
+```
+
+A aplicação abre em <http://localhost:8501>.
+
+## 🐳 Docker
+
+```bash
+docker build -t chatbots/chatbasico .
+docker run --rm -p 8501:8501 --env-file .env chatbots/chatbasico
+```
+
+## 🔧 Variáveis de ambiente
+
+| Variável | Obrigatória | Padrão | Descrição |
+| --- | :---: | --- | --- |
+| `ANTHROPIC_API_KEY` | ✅ | — | Chave da API da Anthropic. |
+| `ANTHROPIC_MODEL` | — | `claude-haiku-5-5` | Modelo usado pelas respostas. |
+| `ANTHROPIC_MAX_TOKENS` | — | `1024` | Limite de tokens de saída. |
+| `ANTHROPIC_TEMPERATURE` | — | `0.0` | Criatividade inicial do modelo. |
+
+## ✅ Testes e lint
+
+```bash
+pytest
+ruff check .
+ruff format --check .
+```
+
+## 🧰 Stack
+
+Streamlit · LlamaIndex · Anthropic Claude · python-dotenv · pytest · ruff
