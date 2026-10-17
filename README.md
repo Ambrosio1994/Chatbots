@@ -1,4 +1,4 @@
-# 🤖 Chatbots — Portfólio
+# 🤖 Chatbots
 
 Coleção de três chatbots independentes construídos com **Streamlit**, explorando
 diferentes formas de orquestrar modelos de linguagem (LLMs): APIs de nuvem,
