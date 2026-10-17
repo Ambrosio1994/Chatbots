@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+tests/
+.env
+.env.*
+!.env.example
+.gradio/
+.git
+.gitignore
+Dockerfile
+README.md
