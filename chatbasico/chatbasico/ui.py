@@ -43,7 +43,28 @@ def _render_history() -> None:
             st.markdown(str(message["content"]))
 
 
-def _sidebar(settings: Settings) -> tuple[Settings, float]:
+def _render_memory_panel(
+    slot: st.delta_generator.DeltaGenerator,
+    settings: Settings,
+) -> None:
+    turns = index_history_turns(
+        st.session_state.get("history", []),
+        include_reasoning=settings.include_reasoning_in_memory,
+        include_errors=settings.include_errors_in_memory,
+        initial_message=INITIAL_MESSAGE,
+    )
+    user_facts: list[str] = st.session_state.get("user_facts", [])
+    with slot.expander(f"Memória da sessão ({len(turns)} turnos | {len(user_facts)} fatos)"):
+        st.caption("**Fatos, preferências e restrições do usuário:**")
+        if user_facts:
+            for fact in user_facts:
+                st.markdown(f"- {fact}")
+        else:
+            st.caption("_Nenhum fato/preferência registrado ainda._")
+        st.caption(f"**Turnos indexados para RAG:** {len(turns)}")
+
+
+def _sidebar(settings: Settings) -> tuple[Settings, float, st.delta_generator.DeltaGenerator]:
     with st.sidebar:
         st.header("Configurações")
 
@@ -84,22 +105,7 @@ def _sidebar(settings: Settings) -> tuple[Settings, float]:
         )
 
         st.button("Limpar conversa", on_click=_clear_history, use_container_width=True)
-
-        turns = index_history_turns(
-            st.session_state.get("history", []),
-            include_reasoning=include_reasoning,
-            include_errors=include_errors,
-            initial_message=INITIAL_MESSAGE,
-        )
-        user_facts: list[str] = st.session_state.get("user_facts", [])
-        with st.expander(f"Memória da sessão ({len(turns)} turnos | {len(user_facts)} fatos)"):
-            st.caption("**Fatos, preferências e restrições do usuário:**")
-            if user_facts:
-                for fact in user_facts:
-                    st.markdown(f"- {fact}")
-            else:
-                st.caption("_Nenhum fato/preferência registrado ainda._")
-            st.caption(f"**Turnos indexados para RAG:** {len(turns)}")
+        memory_slot = st.empty()
 
     updated = replace(
         settings,
@@ -108,7 +114,8 @@ def _sidebar(settings: Settings) -> tuple[Settings, float]:
         include_reasoning_in_memory=include_reasoning,
         include_errors_in_memory=include_errors,
     )
-    return updated, clamp_temperature(temperature)
+    _render_memory_panel(memory_slot, updated)
+    return updated, clamp_temperature(temperature), memory_slot
 
 
 def run() -> None:
@@ -120,7 +127,7 @@ def run() -> None:
     )
 
     _init_state()
-    settings, temperature = _sidebar(Settings.from_env())
+    settings, temperature, memory_slot = _sidebar(Settings.from_env())
     _render_history()
 
     if not settings.is_configured:
@@ -192,3 +199,4 @@ def run() -> None:
         include_errors=settings.include_errors_in_memory,
         initial_message=INITIAL_MESSAGE,
     )
+    _render_memory_panel(memory_slot, settings)
