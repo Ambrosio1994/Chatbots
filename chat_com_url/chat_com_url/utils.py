@@ -312,12 +312,43 @@ def extract_user_facts(text: str) -> list[str]:
     for sentence in sentences:
         normalized = _strip_accents(sentence)
         if any(pattern.search(normalized) for pattern in _FACT_PATTERNS):
-            # Clean trailing question marks if a fact was stated before a question
             fact = sentence.strip()
             if fact and fact not in facts:
                 facts.append(fact)
 
     return facts
+
+
+def parse_memory_evaluation(raw_output: str, user_prompt: str = "") -> list[str]:
+    """Parse the output of the dedicated memory-evaluator model into clean facts."""
+    cleaned = strip_reasoning(raw_output or "", keep_reasoning=False)
+    lines: list[str] = []
+    for raw_line in cleaned.splitlines():
+        line = re.sub(r"^[\s\-*•\d.)]+", "", raw_line).strip()
+        if not line:
+            continue
+        upper = _strip_accents(line.upper())
+        if upper in {"NENHUM", "NADA", "NONE", "NULL", "NAO", "N/A"} or upper.startswith("NENHUM"):
+            continue
+        lines.append(line)
+
+    heuristic_facts = extract_user_facts(user_prompt) if user_prompt else []
+    if user_prompt and not heuristic_facts:
+        return []
+    return lines or heuristic_facts
+
+
+def merge_memory_facts(existing_facts: Sequence[str], new_facts: Sequence[str]) -> list[str]:
+    """Append ``new_facts`` into ``existing_facts`` without duplicates."""
+    merged = list(existing_facts)
+    seen = {_strip_accents(f.lower()) for f in merged}
+    for item in new_facts:
+        cleaned = item.strip()
+        norm = _strip_accents(cleaned.lower())
+        if cleaned and norm not in seen:
+            seen.add(norm)
+            merged.append(cleaned)
+    return merged
 
 
 def update_memory_facts(

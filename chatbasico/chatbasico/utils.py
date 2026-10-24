@@ -157,6 +157,38 @@ def extract_user_facts(text: str) -> list[str]:
     return facts
 
 
+def parse_memory_evaluation(raw_output: str, user_prompt: str = "") -> list[str]:
+    """Parse the output of the dedicated memory-evaluator model into clean facts."""
+    cleaned = strip_reasoning(raw_output or "", keep_reasoning=False)
+    lines: list[str] = []
+    for raw_line in cleaned.splitlines():
+        line = re.sub(r"^[\s\-*•\d.)]+", "", raw_line).strip()
+        if not line:
+            continue
+        upper = _strip_accents(line.upper())
+        if upper in {"NENHUM", "NADA", "NONE", "NULL", "NAO", "N/A"} or upper.startswith("NENHUM"):
+            continue
+        lines.append(line)
+
+    heuristic_facts = extract_user_facts(user_prompt) if user_prompt else []
+    if user_prompt and not heuristic_facts:
+        return []
+    return lines or heuristic_facts
+
+
+def merge_memory_facts(existing_facts: Sequence[str], new_facts: Sequence[str]) -> list[str]:
+    """Append ``new_facts`` into ``existing_facts`` without duplicates."""
+    merged = list(existing_facts)
+    seen = {_strip_accents(f.lower()) for f in merged}
+    for item in new_facts:
+        cleaned = item.strip()
+        norm = _strip_accents(cleaned.lower())
+        if cleaned and norm not in seen:
+            seen.add(norm)
+            merged.append(cleaned)
+    return merged
+
+
 def update_memory_facts(
     existing_facts: Sequence[str],
     messages: Sequence[Mapping[str, object]],
@@ -220,11 +252,7 @@ def index_history_turns(
     include_errors: bool = False,
     initial_message: str | None = None,
 ) -> list[TurnChunk]:
-    """Pair valid ``user`` -> ``assistant`` turns from ``history`` for RAG indexing.
-
-    Skips the initial greeting (``initial_message``), messages marked with
-    ``include_in_memory=False``, and errors/reasoning unless requested.
-    """
+    """Pair valid ``user`` -> ``assistant`` turns from ``history`` for RAG indexing."""
     filtered: list[tuple[str, str]] = []
     pending_user: str | None = None
 
@@ -273,11 +301,7 @@ def retrieve_relevant_turns(
     *,
     top_k: int = DEFAULT_RAG_TOP_K,
 ) -> list[TurnChunk]:
-    """Retrieve at most ``top_k`` relevant past turns for ``user_query`` via BM25 RAG.
-
-    Preserves chronological order among the selected turns and always includes the
-    most recent turn when ``top_k >= 1`` so immediate follow-ups stay coherent.
-    """
+    """Retrieve at most ``top_k`` relevant past turns for ``user_query`` via BM25 RAG."""
     if not turns or top_k <= 0:
         return []
     if len(turns) <= top_k:
@@ -307,7 +331,6 @@ def retrieve_relevant_turns(
                 score += idf * ((tf * (k1 + 1.0)) / denom)
         scored.append((score, idx))
 
-    # Always reserve 1 slot for the immediately preceding turn for conversational continuity
     last_idx = len(turns) - 1
     chosen_indices: set[int] = {last_idx}
 
@@ -317,7 +340,6 @@ def retrieve_relevant_turns(
         if score > 0:
             chosen_indices.add(idx)
 
-    # If still below top_k and no lexical matches, only keep the most recent turn
     ordered = sorted(chosen_indices)
     return [turns[i] for i in ordered]
 
@@ -333,15 +355,7 @@ def build_chat_messages(
     include_errors: bool = False,
     initial_message: str | None = None,
 ) -> list[dict[str, str]]:
-    """Assemble the message list sent to the model using selective memory and RAG.
-
-    - Never sends the initial UI welcome greeting (``initial_message``).
-    - Never sends errors or reasoning unless explicitly requested.
-    - Injects curated user facts, preferences and constraints into the system prompt.
-    - Uses BM25 RAG to include only the most relevant past turns (up to ``rag_top_k``)
-      instead of dumping the entire session history on every question.
-    - The input ``history`` is never mutated.
-    """
+    """Assemble the message list sent to the model using selective memory and RAG."""
     facts = (
         list(memory_facts)
         if memory_facts is not None

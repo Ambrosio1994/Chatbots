@@ -1,4 +1,4 @@
-"""UI tests: run the real Streamlit app headlessly with a fake LLM."""
+"""UI tests: run the real Streamlit app headlessly with fake LLMs."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ pytest.importorskip("llama_index.llms.anthropic")
 from streamlit.testing.v1 import AppTest
 
 from chatbasico import ui
+from chatbasico.config import AVAILABLE_MODELS
 from chatbasico.prompts import INITIAL_MESSAGE
 
 APP = str(Path(__file__).resolve().parent.parent / "app.py")
@@ -33,73 +34,60 @@ def _contents(at: AppTest) -> list[str]:
     return [message["content"] for message in at.session_state.history]
 
 
-def test_without_api_key_shows_hint_and_no_input(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_sidebar_has_llamaindex_selector_and_custom_model_inputs_without_memory_controls() -> None:
+    at = AppTest.from_file(APP).run()
+
+    assert not at.exception
+    assert tuple(at.sidebar.selectbox[0].options) == AVAILABLE_MODELS
+    assert [inp.label for inp in at.sidebar.text_input] == ["Outro modelo", "Chave da API"]
+    assert len(at.sidebar.checkbox) == 0
+    assert [s.label for s in at.sidebar.slider] == ["Temperatura"]
+    assert len(at.chat_input) == 1
+
+
+def test_custom_model_without_api_key_blocks_chat_until_key_provided(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
     at = AppTest.from_file(APP).run()
+    at.sidebar.text_input[0].input("claude-haiku-5-5").run()
 
-    assert not at.exception
-    assert at.title[0].value.startswith("🦙")
-    assert "ANTHROPIC_API_KEY" in at.info[0].value
     assert len(at.chat_input) == 0
-    assert _contents(at) == [INITIAL_MESSAGE]
+    assert "Chave da API" in at.info[0].value
+
+    at.sidebar.text_input[1].input("sk-ant-123").run()
+    assert len(at.chat_input) == 1
 
 
-def test_streams_answer_excludes_initial_message_and_stores_user_facts(
+def test_streams_answer_and_separate_evaluator_writes_to_memory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
     fake = FakeStreamingLLM(["Olá", ", ", "Ana!"])
-
     monkeypatch.setattr(ui, "create_llm", lambda settings, temperature: fake)
+    monkeypatch.setattr(
+        ui,
+        "evaluate_and_write_memory",
+        lambda settings, query, existing: (
+            [*existing, "Usuária se chama Ana"] if "Ana" in query else list(existing)
+        ),
+    )
 
     at = AppTest.from_file(APP).run()
-    at.chat_input[0].set_value("Meu nome é Ana e prefiro respostas curtas.").run()
+    at.chat_input[0].set_value("Meu nome é Ana.").run()
 
     assert not at.exception
-    assert _contents(at) == [
-        INITIAL_MESSAGE,
-        "Meu nome é Ana e prefiro respostas curtas.",
-        "Olá, Ana!",
-    ]
-    assert at.session_state.user_facts == ["Meu nome é Ana e prefiro respostas curtas."]
-    # First turn: INITIAL_MESSAGE must NEVER be sent to Claude
+    assert _contents(at) == [INITIAL_MESSAGE, "Meu nome é Ana.", "Olá, Ana!"]
+    assert at.session_state.user_facts == ["Usuária se chama Ana"]
     assert all(m.content != INITIAL_MESSAGE for m in fake.seen)
 
-    # Second turn: RAG includes relevant turns + user facts in system prompt
     at.chat_input[0].set_value("Qual é o meu nome?").run()
-    assert "Meu nome é Ana" in fake.seen[0].content
-    assert [m.content for m in fake.seen[1:]] == [
-        "Meu nome é Ana e prefiro respostas curtas.",
-        "Olá, Ana!",
-        "Qual é o meu nome?",
-    ]
+    assert "Usuária se chama Ana" in fake.seen[0].content
 
 
-def test_sidebar_controls_are_passed_to_llm(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
-    captured: dict[str, object] = {}
-
-    def fake_create_llm(settings, temperature):
-        captured["model"], captured["temperature"] = settings.model, temperature
-        return FakeStreamingLLM(["ok"])
-
-    monkeypatch.setattr(ui, "create_llm", fake_create_llm)
-
-    at = AppTest.from_file(APP).run()
-    at.sidebar.selectbox[0].select("claude-sonnet-5-5")
-    at.sidebar.slider[0].set_value(0.7)
-    at.run()
-    at.chat_input[0].set_value("oi").run()
-
-    assert captured == {"model": "claude-sonnet-5-5", "temperature": 0.7}
-
-
-def test_provider_error_is_shown_and_not_stored_in_memory_by_default(
+def test_provider_error_is_shown_and_not_stored_in_memory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
-
     def boom(settings, temperature):
         raise RuntimeError("rate limit")
 
@@ -115,8 +103,8 @@ def test_provider_error_is_shown_and_not_stored_in_memory_by_default(
 
 
 def test_clear_button_resets_history_and_memory(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-key")
     monkeypatch.setattr(ui, "create_llm", lambda s, t: FakeStreamingLLM(["resposta"]))
+    monkeypatch.setattr(ui, "evaluate_and_write_memory", lambda s, q, existing: [*existing, "João"])
 
     at = AppTest.from_file(APP).run()
     at.chat_input[0].set_value("Meu nome é João.").run()

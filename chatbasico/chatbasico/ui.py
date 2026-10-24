@@ -7,14 +7,12 @@ from dataclasses import replace
 import streamlit as st
 
 from .config import AVAILABLE_MODELS, Settings
-from .llm import create_llm, stream_response
+from .llm import create_llm, evaluate_and_write_memory, stream_response
 from .prompts import INITIAL_MESSAGE, SYSTEM_PROMPT
 from .utils import (
     build_chat_messages,
     clamp_temperature,
-    index_history_turns,
     strip_reasoning,
-    update_memory_facts,
 )
 
 PAGE_TITLE = "Chatbot Básico"
@@ -43,36 +41,28 @@ def _render_history() -> None:
             st.markdown(str(message["content"]))
 
 
-def _render_memory_panel(
-    slot: st.delta_generator.DeltaGenerator,
-    settings: Settings,
-) -> None:
-    turns = index_history_turns(
-        st.session_state.get("history", []),
-        include_reasoning=settings.include_reasoning_in_memory,
-        include_errors=settings.include_errors_in_memory,
-        initial_message=INITIAL_MESSAGE,
-    )
-    user_facts: list[str] = st.session_state.get("user_facts", [])
-    with slot.expander(f"Memória da sessão ({len(turns)} turnos | {len(user_facts)} fatos)"):
-        st.caption("**Fatos, preferências e restrições do usuário:**")
-        if user_facts:
-            for fact in user_facts:
-                st.markdown(f"- {fact}")
-        else:
-            st.caption("_Nenhum fato/preferência registrado ainda._")
-        st.caption(f"**Turnos indexados para RAG:** {len(turns)}")
-
-
-def _sidebar(settings: Settings) -> tuple[Settings, float, st.delta_generator.DeltaGenerator]:
+def _sidebar(settings: Settings) -> tuple[Settings, float]:
     with st.sidebar:
         st.header("Configurações")
 
         default_model = (
             settings.model if settings.model in AVAILABLE_MODELS else AVAILABLE_MODELS[0]
         )
-        model = st.selectbox(
+        selected_model = st.selectbox(
             "Modelo", AVAILABLE_MODELS, index=AVAILABLE_MODELS.index(default_model)
+        )
+
+        custom_model = st.text_input(
+            "Outro modelo",
+            value="",
+            placeholder="Ex.: claude-haiku-5-5",
+            help="Preencha apenas se quiser usar um modelo externo fora do seletor.",
+        )
+        custom_api_key = st.text_input(
+            "Chave da API",
+            value="",
+            type="password",
+            help="Chave da API para o outro modelo informado acima.",
         )
 
         temperature = st.slider(
@@ -84,57 +74,30 @@ def _sidebar(settings: Settings) -> tuple[Settings, float, st.delta_generator.De
             help="Valores baixos deixam as respostas mais focadas; altos, mais criativas.",
         )
 
-        rag_top_k = st.slider(
-            "Turnos RAG por pergunta",
-            min_value=0,
-            max_value=8,
-            value=max(0, min(8, int(settings.rag_top_k))),
-            step=1,
-            help="Quantidade máxima de turnos relevantes recuperados da memória via RAG.",
-        )
-
-        include_reasoning = st.checkbox(
-            "Incluir raciocínio na memória",
-            value=settings.include_reasoning_in_memory,
-            help="Por padrão blocos de raciocínio são ignorados na memória.",
-        )
-        include_errors = st.checkbox(
-            "Incluir erros na memória",
-            value=settings.include_errors_in_memory,
-            help="Por padrão erros de execução nunca vão para a memória.",
-        )
-
         st.button("Limpar conversa", on_click=_clear_history, use_container_width=True)
-        memory_slot = st.empty()
 
+    effective_key = custom_api_key.strip() or settings.api_key
     updated = replace(
         settings,
-        model=model,
-        rag_top_k=rag_top_k,
-        include_reasoning_in_memory=include_reasoning,
-        include_errors_in_memory=include_errors,
+        model=selected_model,
+        custom_model=custom_model.strip(),
+        api_key=effective_key or None,
     )
-    _render_memory_panel(memory_slot, updated)
-    return updated, clamp_temperature(temperature), memory_slot
+    return updated, clamp_temperature(temperature)
 
 
 def run() -> None:
     """Render and drive the chatbot interface."""
     st.set_page_config(page_title=PAGE_TITLE, page_icon="🦙", layout="centered")
-    st.title("🦙 Chatbot Básico com LlamaIndex + Anthropic")
-    st.caption(
-        "Converse com o Claude usando memória seletiva de fatos/preferências e RAG da sessão."
-    )
+    st.title("🦙 Chatbot Básico com LlamaIndex")
+    st.caption("Converse usando modelos do LlamaIndex com memória inteligente e RAG da sessão.")
 
     _init_state()
-    settings, temperature, memory_slot = _sidebar(Settings.from_env())
+    settings, temperature = _sidebar(Settings.from_env())
     _render_history()
 
     if not settings.is_configured:
-        st.info(
-            "Defina a variável `ANTHROPIC_API_KEY` no arquivo `.env` ou selecione o modelo "
-            "local `ollama/deepseek-r1:1.5b` na barra lateral para conversar."
-        )
+        st.info("Informe a `Chave da API` na barra lateral para usar o modelo personalizado.")
         return
 
     user_query = st.chat_input("Digite sua dúvida...")
@@ -142,12 +105,10 @@ def run() -> None:
         return
 
     st.session_state.history.append({"role": "user", "content": user_query})
-    st.session_state.user_facts = update_memory_facts(
+    st.session_state.user_facts = evaluate_and_write_memory(
+        settings,
+        user_query,
         st.session_state.user_facts,
-        [st.session_state.history[-1]],
-        include_reasoning=settings.include_reasoning_in_memory,
-        include_errors=settings.include_errors_in_memory,
-        initial_message=INITIAL_MESSAGE,
     )
 
     with st.chat_message("user", avatar=USER_AVATAR):
@@ -159,8 +120,8 @@ def run() -> None:
         user_query,
         memory_facts=st.session_state.user_facts,
         rag_top_k=settings.rag_top_k,
-        include_reasoning=settings.include_reasoning_in_memory,
-        include_errors=settings.include_errors_in_memory,
+        include_reasoning=False,
+        include_errors=False,
         initial_message=INITIAL_MESSAGE,
     )
 
@@ -168,35 +129,10 @@ def run() -> None:
         try:
             llm = create_llm(settings, temperature)
             raw_answer = str(st.write_stream(stream_response(llm, messages)))
-            answer = (
-                strip_reasoning(
-                    raw_answer,
-                    keep_reasoning=settings.include_reasoning_in_memory,
-                )
-                or raw_answer
-            )
+            answer = strip_reasoning(raw_answer, keep_reasoning=False) or raw_answer
         except Exception as exc:  # noqa: BLE001 - surface any provider error to the user
-            failed_msg = st.session_state.history.pop()
-            if settings.include_errors_in_memory:
-                failed_msg["is_error"] = True
-                failed_msg["content"] = str(exc)
-                st.session_state.user_facts = update_memory_facts(
-                    st.session_state.user_facts,
-                    [failed_msg],
-                    include_reasoning=settings.include_reasoning_in_memory,
-                    include_errors=True,
-                    initial_message=INITIAL_MESSAGE,
-                )
+            st.session_state.history.pop()
             st.error(f"Não foi possível gerar a resposta: {exc}")
             return
 
-    assistant_entry = {"role": "assistant", "content": answer}
-    st.session_state.history.append(assistant_entry)
-    st.session_state.user_facts = update_memory_facts(
-        st.session_state.user_facts,
-        [assistant_entry],
-        include_reasoning=settings.include_reasoning_in_memory,
-        include_errors=settings.include_errors_in_memory,
-        initial_message=INITIAL_MESSAGE,
-    )
-    _render_memory_panel(memory_slot, settings)
+    st.session_state.history.append({"role": "assistant", "content": answer})

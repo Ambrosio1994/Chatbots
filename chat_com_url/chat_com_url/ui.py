@@ -1,4 +1,4 @@
-"""Streamlit interface for the web-search chatbot (SearXNG + Claude/Ollama)."""
+"""Streamlit interface for the web-search chatbot (SearXNG + LlamaIndex/Custom Models)."""
 
 from __future__ import annotations
 
@@ -8,17 +8,15 @@ from dataclasses import replace
 import streamlit as st
 
 from .config import AVAILABLE_MODELS, Settings
-from .llm import create_chain, stream_answer
+from .llm import create_chain, evaluate_and_write_memory, stream_answer
 from .prompts import INITIAL_MESSAGE
 from .search import create_search_tool, run_search
 from .utils import (
-    PageChunk,
     SearchResult,
     format_sources,
     ingest_pages_into_memory,
     retrieve_relevant_chunks,
     strip_reasoning,
-    update_memory_facts,
 )
 
 PAGE_TITLE = "Chatbot com URLs"
@@ -64,44 +62,29 @@ def _render_history() -> None:
             _render_sources(message.get("sources") or [])
 
 
-def _render_memory_panel(slot: st.delta_generator.DeltaGenerator) -> None:
-    page_chunks: list[PageChunk] = st.session_state.get("page_memory", [])
-    user_facts: list[str] = st.session_state.get("user_facts", [])
-    with slot.expander(f"Memória da sessão ({len(page_chunks)} trechos | {len(user_facts)} fatos)"):
-        st.caption("**Fatos, preferências e restrições do usuário:**")
-        if user_facts:
-            for fact in user_facts:
-                st.markdown(f"- {fact}")
-        else:
-            st.caption("_Nenhum fato/preferência registrado ainda._")
-        st.caption(f"**Trechos de páginas indexados para RAG:** {len(page_chunks)}")
-
-
-def _sidebar(settings: Settings) -> tuple[Settings, float, st.delta_generator.DeltaGenerator]:
+def _sidebar(settings: Settings) -> tuple[Settings, float]:
     with st.sidebar:
         st.header("Configurações")
 
         default_model = (
             settings.model if settings.model in AVAILABLE_MODELS else AVAILABLE_MODELS[0]
         )
-        model = st.selectbox(
+        selected_model = st.selectbox(
             "Modelo", AVAILABLE_MODELS, index=AVAILABLE_MODELS.index(default_model)
         )
 
-        searxng_base_url = st.text_input(
-            "Servidor SearXNG",
-            value=settings.searxng_base_url,
-            help="URL da instância SearXNG (busca gratuita e sem chave de API).",
+        custom_model = st.text_input(
+            "Outro modelo",
+            value="",
+            placeholder="Ex.: claude-haiku-5-5",
+            help="Preencha apenas se quiser usar um modelo externo fora do seletor.",
         )
-
-        api_key = settings.api_key
-        if not model.startswith("ollama/") and not api_key:
-            st.subheader("Permissões")
-            api_key = st.text_input(
-                "Chave ANTHROPIC",
-                type="password",
-                help="Opcional se você selecionar um modelo local ollama/...",
-            )
+        custom_api_key = st.text_input(
+            "Chave da API",
+            value="",
+            type="password",
+            help="Chave da API para o outro modelo informado acima.",
+        )
 
         temperature = st.slider(
             "Temperatura",
@@ -127,42 +110,19 @@ def _sidebar(settings: Settings) -> tuple[Settings, float, st.delta_generator.De
             1,
             help="Quantidade de fontes buscadas no SearXNG a cada pergunta.",
         )
-        rag_top_k = st.slider(
-            "Trechos RAG por pergunta",
-            1,
-            8,
-            max(1, min(8, int(settings.rag_top_k))),
-            1,
-            help="Quantidade de trechos relevantes da memória de páginas enviados ao LLM.",
-        )
-
-        include_reasoning = st.checkbox(
-            "Incluir raciocínio na memória",
-            value=settings.include_reasoning_in_memory,
-            help="Por padrão blocos de raciocínio são ignorados na memória.",
-        )
-        include_errors = st.checkbox(
-            "Incluir erros na memória",
-            value=settings.include_errors_in_memory,
-            help="Por padrão erros de execução nunca vão para a memória.",
-        )
 
         st.button("Limpar conversa", on_click=_clear_history, use_container_width=True)
-        memory_slot = st.empty()
-        _render_memory_panel(memory_slot)
 
+    effective_key = custom_api_key.strip() or settings.api_key
     updated = replace(
         settings,
-        api_key=api_key or None,
-        searxng_base_url=searxng_base_url.strip() or settings.searxng_base_url,
-        model=model,
+        api_key=effective_key or None,
+        model=selected_model,
+        custom_model=custom_model.strip(),
         max_tokens=max_tokens,
         max_results=max_results,
-        rag_top_k=rag_top_k,
-        include_reasoning_in_memory=include_reasoning,
-        include_errors_in_memory=include_errors,
     )
-    return updated, temperature, memory_slot
+    return updated, temperature
 
 
 def _answer(
@@ -173,7 +133,7 @@ def _answer(
 ) -> tuple[str, list[SearchResult]]:
     """Search SearXNG, store page content in session memory, retrieve RAG chunks, and stream."""
     search_tool = create_search_tool(settings.max_results, settings.searxng_base_url)
-    with st.spinner("Pesquisando na web (SearXNG)..."):
+    with st.spinner("Pesquisando na web..."):
         fresh_results = run_search(search_tool, question)
 
     # 1. Write the page content into the active session memory.
@@ -191,7 +151,7 @@ def _answer(
 
     chain = create_chain(settings, temperature)
     raw_answer = str(st.write_stream(stream_answer(chain, question, relevant_chunks, memory_facts)))
-    clean_answer = strip_reasoning(raw_answer, keep_reasoning=settings.include_reasoning_in_memory)
+    clean_answer = strip_reasoning(raw_answer, keep_reasoning=False)
 
     return clean_answer or raw_answer, relevant_chunks
 
@@ -201,19 +161,16 @@ def run() -> None:
     st.set_page_config(page_title=PAGE_TITLE, page_icon="🌐", layout="centered")
     st.title("🌐 Chatbot com URLs")
     st.caption(
-        "Pesquisa na web com SearXNG (sem chave de busca), grava páginas na memória da sessão "
-        "com RAG e responde citando as fontes."
+        "Pesquisa na web com SearXNG, grava páginas na memória da sessão com RAG "
+        "e responde citando as fontes."
     )
 
     _init_state()
-    settings, temperature, memory_slot = _sidebar(Settings.from_env())
+    settings, temperature = _sidebar(Settings.from_env())
     _render_history()
 
     if not settings.is_configured:
-        st.info(
-            "Informe a chave `ANTHROPIC_API_KEY` na barra lateral ou selecione o modelo "
-            "local `ollama/deepseek-r1:1.5b` para conversar sem chave de API."
-        )
+        st.info("Informe a `Chave da API` na barra lateral para usar o modelo personalizado.")
         return
 
     user_query = st.chat_input(INITIAL_MESSAGE)
@@ -221,12 +178,10 @@ def run() -> None:
         return
 
     st.session_state.history.append({"role": "user", "content": user_query, "sources": []})
-    st.session_state.user_facts = update_memory_facts(
+    st.session_state.user_facts = evaluate_and_write_memory(
+        settings,
+        user_query,
         st.session_state.user_facts,
-        [st.session_state.history[-1]],
-        include_reasoning=settings.include_reasoning_in_memory,
-        include_errors=settings.include_errors_in_memory,
-        initial_message=INITIAL_MESSAGE,
     )
 
     with st.chat_message("user", avatar=USER_AVATAR):
@@ -241,29 +196,10 @@ def run() -> None:
                 st.session_state.user_facts,
             )
         except Exception as exc:  # noqa: BLE001 - surface any provider error to the user
-            failed_msg = st.session_state.history.pop()
-            if settings.include_errors_in_memory:
-                failed_msg["is_error"] = True
-                failed_msg["content"] = str(exc)
-                st.session_state.user_facts = update_memory_facts(
-                    st.session_state.user_facts,
-                    [failed_msg],
-                    include_reasoning=settings.include_reasoning_in_memory,
-                    include_errors=True,
-                    initial_message=INITIAL_MESSAGE,
-                )
+            st.session_state.history.pop()
             st.error(f"Não foi possível responder agora: {exc}")
             return
 
         _render_sources(results)
 
-    assistant_entry = {"role": "assistant", "content": answer, "sources": results}
-    st.session_state.history.append(assistant_entry)
-    st.session_state.user_facts = update_memory_facts(
-        st.session_state.user_facts,
-        [assistant_entry],
-        include_reasoning=settings.include_reasoning_in_memory,
-        include_errors=settings.include_errors_in_memory,
-        initial_message=INITIAL_MESSAGE,
-    )
-    _render_memory_panel(memory_slot)
+    st.session_state.history.append({"role": "assistant", "content": answer, "sources": results})

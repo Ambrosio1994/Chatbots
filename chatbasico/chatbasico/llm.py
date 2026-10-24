@@ -1,4 +1,4 @@
-"""LLM orchestration for the basic chatbot.
+"""LLM orchestration for the basic chatbot and its dedicated memory-evaluator model.
 
 This module is intentionally free of Streamlit imports so it can be reused and
 tested on its own.
@@ -16,18 +16,15 @@ from llama_index.core.llms import ChatMessage
 from llama_index.llms.anthropic import Anthropic
 
 from .config import LOCAL_MODEL_PREFIX, Settings
+from .prompts import MEMORY_EVALUATOR_PROMPT
+from .utils import extract_user_facts, merge_memory_facts, parse_memory_evaluation
 
 Messages = Sequence[Mapping[str, str]]
 
 
 @dataclass(frozen=True, slots=True)
 class _OllamaDirectClient:
-    """Minimal LlamaIndex-like client talking to a local Ollama server over HTTP.
-
-    Exposes ``chat`` and ``stream_chat`` with the same response shape used by
-    :func:`generate_response` and :func:`stream_response` so local testing works
-    without an Anthropic API key.
-    """
+    """Minimal LlamaIndex-like client talking to a local Ollama server over HTTP."""
 
     model: str
     base_url: str
@@ -78,30 +75,67 @@ class _OllamaDirectClient:
 
 
 def create_llm(settings: Settings, temperature: float) -> Anthropic | _OllamaDirectClient:
-    """Create an LLM client from ``settings``.
-
-    The temperature is passed explicitly because LlamaIndex binds it at
-    construction time, and the UI lets the user change it between turns.
-    """
-    if settings.uses_local_model:
+    """Create an LLM client from ``settings``."""
+    target = settings.active_model
+    if settings.uses_local_model and not settings.api_key:
         return _OllamaDirectClient(
-            model=settings.model.removeprefix(LOCAL_MODEL_PREFIX),
+            model=target.removeprefix(LOCAL_MODEL_PREFIX),
+            base_url=settings.ollama_base_url,
+            temperature=temperature,
+        )
+    if settings.uses_local_model and not target.startswith("claude-"):
+        return _OllamaDirectClient(
+            model=target.removeprefix(LOCAL_MODEL_PREFIX),
             base_url=settings.ollama_base_url,
             temperature=temperature,
         )
 
     if not settings.api_key:
         raise ValueError(
-            "A chave ANTHROPIC_API_KEY não foi encontrada. "
-            "Defina-a no arquivo .env antes de conversar."
+            "A chave da API não foi encontrada. "
+            "Informe a chave na barra lateral ou escolha um modelo do seletor."
         )
 
     return Anthropic(
-        model=settings.model,
+        model=target,
         max_tokens=settings.max_tokens,
         temperature=temperature,
         api_key=settings.api_key,
     )
+
+
+def create_memory_llm(settings: Settings) -> _OllamaDirectClient | Anthropic:
+    """Create the separate model dedicated to evaluating what should be written to memory."""
+    return _OllamaDirectClient(
+        model=settings.memory_model.removeprefix(LOCAL_MODEL_PREFIX),
+        base_url=settings.ollama_base_url,
+        temperature=0.0,
+    )
+
+
+def evaluate_and_write_memory(
+    settings: Settings,
+    user_query: str,
+    existing_facts: Sequence[str],
+    memory_llm: Anthropic | _OllamaDirectClient | None = None,
+) -> list[str]:
+    """Use a separate model to evaluate whether ``user_query`` should be written to memory."""
+    candidates = extract_user_facts(user_query)
+    if not candidates:
+        return list(existing_facts)
+
+    try:
+        evaluator = memory_llm if memory_llm is not None else create_memory_llm(settings)
+        eval_messages = [
+            {"role": "system", "content": MEMORY_EVALUATOR_PROMPT},
+            {"role": "user", "content": f"Mensagem do usuário:\n{user_query}"},
+        ]
+        raw_text = generate_response(evaluator, eval_messages)
+        extracted = parse_memory_evaluation(raw_text, user_prompt=user_query)
+    except Exception:  # noqa: BLE001 - fallback to deterministic extraction if offline
+        extracted = candidates
+
+    return merge_memory_facts(existing_facts, extracted)
 
 
 def to_chat_messages(messages: Messages) -> list[ChatMessage]:

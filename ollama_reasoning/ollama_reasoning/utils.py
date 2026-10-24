@@ -2,16 +2,40 @@
 
 Reasoning models such as DeepSeek-R1 may expose their chain of thought either in
 a dedicated field or inline, wrapped in reasoning tags. These helpers split
-"reasoning" from the final "answer" so the UI can present them separately.
+"reasoning" from the final "answer", filter conversation history, and parse the
+output of the dedicated memory-evaluator model.
 """
 
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 
 _THINK_BLOCK = re.compile(r"<think(?:ing)?>(.*?)</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
 _THINK_OPEN = re.compile(r"<think(?:ing)?>", re.IGNORECASE)
+
+_FACT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(?:meu nome e|me chamo|sou o|sou a|eu sou|trabalho com|trabalho na|trabalho no|"
+        r"estudo|moro em|tenho \d+\s*anos|minha profissao|minha area|uso o|uso a|utilizo)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:prefiro|gosto de|nao gosto|odeio|quero que|sempre responda|nunca responda|"
+        r"responda apenas|responda sempre|responda em|nao use|evite|seja breve|seja detalhado|"
+        r"em topicos|em portugues|em ingles|sem jargao|restricao|foco em|"
+        r"lembre(?:-se)? que|considere que|meu objetivo|minha meta|orcamento)\b",
+        re.IGNORECASE,
+    ),
+)
+
+DEFAULT_MAX_HISTORY_TURNS = 5
+
+
+def _strip_accents(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text)
+    return "".join(ch for ch in normalized if not unicodedata.combining(ch))
 
 
 def split_reasoning(text: str) -> tuple[str, str]:
@@ -58,11 +82,7 @@ _CLOSE_TAG = re.compile(r"</think(?:ing)?>", re.IGNORECASE)
 
 
 def _partial_tag_start(buffer: str, tags: tuple[str, ...]) -> int:
-    """Return where a possibly incomplete trailing tag starts, or ``-1``.
-
-    When streaming, a tag may be split across chunks (``"<thi"`` + ``"nk>"``).
-    That tail must be held back until the next chunk tells us what it is.
-    """
+    """Return where a possibly incomplete trailing tag starts, or ``-1``."""
     start = buffer.rfind("<")
     if start == -1:
         return -1
@@ -71,14 +91,7 @@ def _partial_tag_start(buffer: str, tags: tuple[str, ...]) -> int:
 
 
 class ReasoningStreamSplitter:
-    """Incrementally split a token stream into reasoning and answer pieces.
-
-    Feed it chunks as they arrive; it returns ``(kind, text)`` events where
-    ``kind`` is :data:`REASONING` or :data:`ANSWER`. It understands both the
-    dedicated ``reasoning_content`` field and inline ``think`` tags, including
-    tags split across chunk boundaries. The accumulated, stripped texts are
-    available in :attr:`reasoning` and :attr:`answer`.
-    """
+    """Incrementally split a token stream into reasoning and answer pieces."""
 
     def __init__(self) -> None:
         self._buffer = ""
@@ -140,7 +153,58 @@ class ReasoningStreamSplitter:
         return events
 
 
-DEFAULT_MAX_HISTORY_TURNS = 5
+def extract_user_facts(text: str) -> list[str]:
+    """Deterministic extractor for user facts, preferences and constraints."""
+    if not text or not text.strip():
+        return []
+    _, clean_text = split_reasoning(text)
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?;\n])\s+", clean_text) if s.strip()]
+    facts: list[str] = []
+    for sentence in sentences:
+        if (
+            any(pattern.search(_strip_accents(sentence)) for pattern in _FACT_PATTERNS)
+            and sentence not in facts
+        ):
+            facts.append(sentence)
+    return facts
+
+
+def parse_memory_evaluation(raw_output: str, user_prompt: str = "") -> list[str]:
+    """Parse the output of the dedicated memory-evaluator model into clean facts.
+
+    Strips any ``<think>`` blocks, ignores ``NENHUM`` / empty markers, and
+    cross-checks against ``user_prompt`` so hallucinated or irrelevant lines
+    never pollute session memory.
+    """
+    _, cleaned = split_reasoning(raw_output or "")
+    lines: list[str] = []
+    for raw_line in cleaned.splitlines():
+        line = re.sub(r"^[\s\-*•\d.)]+", "", raw_line).strip()
+        if not line:
+            continue
+        upper = _strip_accents(line.upper())
+        if upper in {"NENHUM", "NADA", "NONE", "NULL", "NAO", "N/A"} or upper.startswith("NENHUM"):
+            continue
+        lines.append(line)
+
+    # If the user prompt itself has no durable fact/preference signal, ignore noisy LLM output
+    heuristic_facts = extract_user_facts(user_prompt) if user_prompt else []
+    if user_prompt and not heuristic_facts:
+        return []
+    return lines or heuristic_facts
+
+
+def merge_memory_facts(existing_facts: Sequence[str], new_facts: Sequence[str]) -> list[str]:
+    """Append ``new_facts`` into ``existing_facts`` without duplicates."""
+    merged = list(existing_facts)
+    seen = {_strip_accents(f.lower()) for f in merged}
+    for item in new_facts:
+        cleaned = item.strip()
+        norm = _strip_accents(cleaned.lower())
+        if cleaned and norm not in seen:
+            seen.add(norm)
+            merged.append(cleaned)
+    return merged
 
 
 def build_history_messages(
@@ -156,7 +220,7 @@ def build_history_messages(
     - Never include the UI greeting (``initial_message``) or messages flagged
       with ``include_in_memory=False`` or ``is_error=True``.
     - Strip 100% of ``reasoning`` / ``<think>`` blocks from previous turns by
-      default, unless the user explicitly sets ``include_reasoning=True``.
+      default, keeping only the question and the clean final answer.
     - Keep only complete, valid ``user`` -> ``assistant`` turns within the last
       ``max_turns`` window so CPU inference stays fast.
     """
@@ -175,7 +239,6 @@ def build_history_messages(
         raw_content = str(entry.get("content") or "").strip()
         reasoning_field = str(entry.get("reasoning") or "").strip()
 
-        # Skip the initial assistant welcome message at index 0.
         if (
             idx == 0
             and role == "assistant"
@@ -193,7 +256,6 @@ def build_history_messages(
         if not content:
             continue
 
-        # Ensure history starts with a user message and alternates cleanly.
         if not cleaned and role != "user":
             continue
         if cleaned and cleaned[-1]["role"] == role:
@@ -202,8 +264,6 @@ def build_history_messages(
 
         cleaned.append({"role": role, "content": content})
 
-    # If the trailing message is an unanswered user message, drop it from history
-    # because the current question is passed separately via ``{input}``.
     if cleaned and cleaned[-1]["role"] == "user":
         cleaned.pop()
 

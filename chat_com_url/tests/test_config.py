@@ -5,10 +5,10 @@ from __future__ import annotations
 from chat_com_url.config import DEFAULT_MODEL, DEFAULT_SEARXNG_BASE_URL, Settings
 
 
-def test_is_configured_with_api_key_or_local_model() -> None:
-    assert not Settings(api_key=None).is_configured
-    assert Settings(api_key="sk-ant-123").is_configured
-    assert Settings(api_key=None, model="ollama/deepseek-r1:1.5b").is_configured
+def test_is_configured_with_selector_model_or_custom_model_plus_key() -> None:
+    assert Settings().is_configured
+    assert not Settings(custom_model="claude-haiku-5-5", api_key=None).is_configured
+    assert Settings(custom_model="claude-haiku-5-5", api_key="sk-ant-123").is_configured
 
 
 def test_from_env_reads_specific_variables(monkeypatch) -> None:
