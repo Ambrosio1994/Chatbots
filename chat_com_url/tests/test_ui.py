@@ -43,14 +43,13 @@ class FakeStreamingChain:
 
 @pytest.fixture
 def configured(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
-    """Provide both API keys and fake out every network call."""
+    """Provide configuration and fake out network calls."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "fake-anthropic")
-    monkeypatch.setenv("TAVILY_API_KEY", "fake-tavily")
 
     state: dict[str, object] = {"chain": FakeStreamingChain(["Segundo ", "as fontes, ", "42."])}
 
-    def fake_create_search_tool(max_results, api_key):
-        state["max_results"], state["tavily_key"] = max_results, api_key
+    def fake_create_search_tool(max_results, base_url):
+        state["max_results"], state["searxng_url"] = max_results, base_url
         return object()
 
     def fake_create_chain(settings, temperature):
@@ -63,32 +62,34 @@ def configured(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     return state
 
 
-def test_without_keys_asks_for_them(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_without_key_shows_searxng_url_and_allows_local_model(
+    monkeypatch: pytest.MonkeyPatch, configured: dict[str, object]
+) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
     at = AppTest.from_file(APP).run()
 
     assert not at.exception
     labels = [field.label for field in at.sidebar.text_input]
-    assert labels == ["Chave ANTHROPIC", "Chave TAVILY"]
-    assert "TAVILY_API_KEY" in at.info[0].value
+    assert labels == ["Servidor SearXNG", "Chave ANTHROPIC"]
     assert len(at.chat_input) == 0
 
+    # Selecting the local Ollama model unlocks chat without any API key!
+    at.sidebar.selectbox[0].select("ollama/deepseek-r1:1.5b").run()
+    assert len(at.chat_input) == 1
 
-def test_keys_typed_in_sidebar_unlock_chat(
+
+def test_key_typed_in_sidebar_unlocks_chat(
     monkeypatch: pytest.MonkeyPatch, configured: dict[str, object]
 ) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
     at = AppTest.from_file(APP).run()
-    at.sidebar.text_input[0].input("sk-ant-digitada")
-    at.sidebar.text_input[1].input("tvly-digitada").run()
+    at.sidebar.text_input[1].input("sk-ant-digitada").run()
 
     assert len(at.chat_input) == 1
     at.chat_input[0].set_value("pergunta").run()
-    assert configured["tavily_key"] == "tvly-digitada"
+    assert configured["searxng_url"] == "http://localhost:8080"
 
 
 def test_stores_pages_in_session_memory_runs_rag_and_extracts_facts(
@@ -131,7 +132,7 @@ def test_search_error_is_shown_and_excluded_from_memory_by_default(
     monkeypatch: pytest.MonkeyPatch, configured: dict[str, object]
 ) -> None:
     def boom(tool, query):
-        raise RuntimeError("tavily fora do ar")
+        raise RuntimeError("searxng fora do ar")
 
     monkeypatch.setattr(ui, "run_search", boom)
 
@@ -139,6 +140,6 @@ def test_search_error_is_shown_and_excluded_from_memory_by_default(
     at.chat_input[0].set_value("q").run()
 
     assert not at.exception
-    assert "tavily fora do ar" in at.error[0].value
+    assert "searxng fora do ar" in at.error[0].value
     assert [m["content"] for m in at.session_state.history] == [INITIAL_MESSAGE]
     assert at.session_state.user_facts == []

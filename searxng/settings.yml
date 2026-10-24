@@ -1,0 +1,15 @@
+# Configuração do SearXNG para permitir consultas em formato JSON pelo chat_com_url
+use_default_settings: true
+
+server:
+  secret_key: "chatbots-local-searxng-secret-key"
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  default_lang: "pt-BR"
+  formats:
+    - html
+    - json

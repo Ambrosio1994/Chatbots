@@ -123,8 +123,11 @@ def run() -> None:
     settings, temperature = _sidebar(Settings.from_env())
     _render_history()
 
-    if not settings.api_key:
-        st.info("Defina a variável `ANTHROPIC_API_KEY` no arquivo `.env` para começar a conversar.")
+    if not settings.is_configured:
+        st.info(
+            "Defina a variável `ANTHROPIC_API_KEY` no arquivo `.env` ou selecione o modelo "
+            "local `ollama/deepseek-r1:1.5b` na barra lateral para conversar."
+        )
         return
 
     user_query = st.chat_input("Digite sua dúvida...")

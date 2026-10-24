@@ -1,4 +1,4 @@
-"""Streamlit interface for the web-search chatbot."""
+"""Streamlit interface for the web-search chatbot (SearXNG + Claude/Ollama)."""
 
 from __future__ import annotations
 
@@ -64,24 +64,8 @@ def _render_history() -> None:
             _render_sources(message.get("sources") or [])
 
 
-def _api_keys(settings: Settings) -> tuple[str, str]:
-    """Return the API keys, asking for them in the sidebar when missing."""
-    api_key = settings.api_key
-    tavily_api_key = settings.tavily_api_key
-
-    if not api_key:
-        api_key = st.text_input("Chave ANTHROPIC", type="password")
-    if not tavily_api_key:
-        tavily_api_key = st.text_input("Chave TAVILY", type="password")
-
-    return api_key or "", tavily_api_key or ""
-
-
 def _sidebar(settings: Settings) -> tuple[Settings, float]:
     with st.sidebar:
-        st.header("Permissões")
-        api_key, tavily_api_key = _api_keys(settings)
-
         st.header("Configurações")
 
         default_model = (
@@ -90,6 +74,21 @@ def _sidebar(settings: Settings) -> tuple[Settings, float]:
         model = st.selectbox(
             "Modelo", AVAILABLE_MODELS, index=AVAILABLE_MODELS.index(default_model)
         )
+
+        searxng_base_url = st.text_input(
+            "Servidor SearXNG",
+            value=settings.searxng_base_url,
+            help="URL da instância SearXNG (busca gratuita e sem chave de API).",
+        )
+
+        api_key = settings.api_key
+        if not model.startswith("ollama/") and not api_key:
+            st.subheader("Permissões")
+            api_key = st.text_input(
+                "Chave ANTHROPIC",
+                type="password",
+                help="Opcional se você selecionar um modelo local ollama/...",
+            )
 
         temperature = st.slider(
             "Temperatura",
@@ -113,7 +112,7 @@ def _sidebar(settings: Settings) -> tuple[Settings, float]:
             5,
             max(1, min(5, int(settings.max_results))),
             1,
-            help="Quantidade de fontes buscadas na web a cada pergunta.",
+            help="Quantidade de fontes buscadas no SearXNG a cada pergunta.",
         )
         rag_top_k = st.slider(
             "Trechos RAG por pergunta",
@@ -153,7 +152,7 @@ def _sidebar(settings: Settings) -> tuple[Settings, float]:
     updated = replace(
         settings,
         api_key=api_key or None,
-        tavily_api_key=tavily_api_key or None,
+        searxng_base_url=searxng_base_url.strip() or settings.searxng_base_url,
         model=model,
         max_tokens=max_tokens,
         max_results=max_results,
@@ -170,9 +169,9 @@ def _answer(
     question: str,
     memory_facts: Sequence[str],
 ) -> tuple[str, list[SearchResult]]:
-    """Search, store page content in session memory, retrieve top RAG chunks, and stream answer."""
-    search_tool = create_search_tool(settings.max_results, settings.tavily_api_key)
-    with st.spinner("Pesquisando na web..."):
+    """Search SearXNG, store page content in session memory, retrieve RAG chunks, and stream."""
+    search_tool = create_search_tool(settings.max_results, settings.searxng_base_url)
+    with st.spinner("Pesquisando na web (SearXNG)..."):
         fresh_results = run_search(search_tool, question)
 
     # 1. Write the page content into the active session memory.
@@ -200,8 +199,8 @@ def run() -> None:
     st.set_page_config(page_title=PAGE_TITLE, page_icon="🌐", layout="centered")
     st.title("🌐 Chatbot com URLs")
     st.caption(
-        "Pesquisa na web com Tavily, grava páginas na memória da sessão com RAG "
-        "e responde citando as fontes."
+        "Pesquisa na web com SearXNG (sem chave de busca), grava páginas na memória da sessão "
+        "com RAG e responde citando as fontes."
     )
 
     _init_state()
@@ -209,7 +208,10 @@ def run() -> None:
     _render_history()
 
     if not settings.is_configured:
-        st.info("Informe as chaves `ANTHROPIC_API_KEY` e `TAVILY_API_KEY` para continuar.")
+        st.info(
+            "Informe a chave `ANTHROPIC_API_KEY` na barra lateral ou selecione o modelo "
+            "local `ollama/deepseek-r1:1.5b` para conversar sem chave de API."
+        )
         return
 
     user_query = st.chat_input(INITIAL_MESSAGE)

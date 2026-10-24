@@ -13,7 +13,7 @@ entre as abordagens.
 | Projeto | Descrição | Orquestração | Provedor |
 | --- | --- | --- | --- |
 | [chatbasico](./chatbasico) | Chatbot conversacional com controle de temperatura e memória de conversa. | [LlamaIndex](https://www.llamaindex.ai/) | Anthropic Claude |
-| [chat_com_url](./chat_com_url) | Chatbot que pesquisa na web e responde citando as URLs usadas como fonte. | [LangChain](https://python.langchain.com/) | Anthropic Claude + Tavily |
+| [chat_com_url](./chat_com_url) | Chatbot que pesquisa na web com SearXNG (sem chave de API de busca), salva páginas na memória da sessão com RAG e responde citando as URLs. | [LangChain](https://python.langchain.com/) | Anthropic Claude / Ollama + [SearXNG](https://docs.searxng.org/) |
 | [ollama_reasoning](./ollama_reasoning) | Chatbot local que expõe o "raciocínio" de um modelo DeepSeek-R1. | [LangChain](https://python.langchain.com/) | [Ollama](https://ollama.com/) |
 
 ## 🏗️ Arquitetura
@@ -87,5 +87,5 @@ docker compose up --build
 
 ## 🧰 Stack
 
-Python 3.11+ · Streamlit · LlamaIndex · LangChain · Anthropic Claude · Tavily ·
+Python 3.11+ · Streamlit · LlamaIndex · LangChain · Anthropic Claude · SearXNG ·
 Ollama · Docker · GitHub Actions

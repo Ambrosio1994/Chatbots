@@ -10,13 +10,16 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DEFAULT_MODEL = "claude-haiku-5-5"
+LOCAL_MODEL_PREFIX = "ollama/"
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 #: Models available in the sidebar. Keep this list in sync with the Anthropic
-#: model lineup: https://platform.claude.com/docs/en/about-claude/models/overview
+#: model lineup, plus a keyless local Ollama option for testing without API keys.
 AVAILABLE_MODELS: tuple[str, ...] = (
     "claude-haiku-5-5",
     "claude-sonnet-5-5",
     "claude-opus-5-5",
+    "ollama/deepseek-r1:1.5b",
 )
 
 DEFAULT_MAX_TOKENS = 1024
@@ -29,6 +32,7 @@ class Settings:
     """Immutable runtime settings for the chatbot."""
 
     api_key: str | None = None
+    ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
     model: str = DEFAULT_MODEL
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = DEFAULT_TEMPERATURE
@@ -51,6 +55,7 @@ class Settings:
         }
         return cls(
             api_key=os.getenv("ANTHROPIC_API_KEY") or None,
+            ollama_base_url=(os.getenv("OLLAMA_BASE_URL") or DEFAULT_OLLAMA_BASE_URL).rstrip("/"),
             model=os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL),
             max_tokens=int(os.getenv("ANTHROPIC_MAX_TOKENS", str(DEFAULT_MAX_TOKENS))),
             temperature=float(os.getenv("ANTHROPIC_TEMPERATURE", str(DEFAULT_TEMPERATURE))),
@@ -58,3 +63,13 @@ class Settings:
             include_reasoning_in_memory=include_reasoning,
             include_errors_in_memory=include_errors,
         )
+
+    @property
+    def uses_local_model(self) -> bool:
+        """Whether the selected model runs on the local Ollama server (no API key needed)."""
+        return self.model.startswith(LOCAL_MODEL_PREFIX)
+
+    @property
+    def is_configured(self) -> bool:
+        """Whether an API key is present or a local Ollama model is selected."""
+        return bool(self.api_key or self.uses_local_model)
