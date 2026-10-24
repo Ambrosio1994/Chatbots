@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.output_parsers import StrOutputParser
@@ -21,7 +21,7 @@ def create_prompt() -> ChatPromptTemplate:
             ("system", SYSTEM_PROMPT),
             ("human", HUMAN_TEMPLATE),
         ]
-    )
+    ).partial(memory_facts="Nenhuma preferência ou fato registrado ainda.")
 
 
 def create_llm(settings: Settings, temperature: float) -> ChatAnthropic:
@@ -42,6 +42,28 @@ def create_chain(settings: Settings, temperature: float) -> Runnable:
     return create_prompt() | create_llm(settings, temperature) | StrOutputParser()
 
 
-def answer_question(chain: Runnable, question: str, results: Sequence[SearchResult]) -> str:
+def answer_question(
+    chain: Runnable,
+    question: str,
+    results: Sequence[SearchResult],
+    memory_facts: Sequence[str] = (),
+) -> str:
     """Run the chain and return the model's answer as plain text."""
-    return str(chain.invoke(build_prompt_variables(question, results)))
+    return str(chain.invoke(build_prompt_variables(question, results, memory_facts)))
+
+
+def stream_answer(
+    chain: Runnable,
+    question: str,
+    results: Sequence[SearchResult],
+    memory_facts: Sequence[str] = (),
+) -> Iterator[str]:
+    """Yield the model's answer incrementally, as text chunks.
+
+    The chain ends with ``StrOutputParser``, so every streamed chunk is already
+    a plain string. Empty chunks are skipped to avoid needless UI updates.
+    """
+    for chunk in chain.stream(build_prompt_variables(question, results, memory_facts)):
+        text = str(chunk)
+        if text:
+            yield text

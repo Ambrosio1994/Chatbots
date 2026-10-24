@@ -7,7 +7,7 @@ import pytest
 pytest.importorskip("langchain_core")
 pytest.importorskip("langchain_anthropic")
 
-from chat_com_url.llm import answer_question, create_prompt
+from chat_com_url.llm import answer_question, create_prompt, stream_answer
 from chat_com_url.utils import SearchResult
 
 
@@ -40,3 +40,34 @@ def test_answer_question_passes_prompt_variables() -> None:
     assert chain.received is not None
     assert chain.received["question"] == "pergunta"
     assert "conteudo" in chain.received["search_results"]
+
+
+class FakeStreamingChain:
+    def __init__(self, chunks: list[str]) -> None:
+        self.chunks = chunks
+        self.received: dict[str, str] | None = None
+
+    def stream(self, variables: dict[str, str]):
+        self.received = variables
+        yield from self.chunks
+
+
+def test_stream_answer_yields_chunks_and_skips_empty() -> None:
+    chain = FakeStreamingChain(["Resp", "", "osta ", "final"])
+    results = [SearchResult(title="A", url="https://a.com", content="conteudo")]
+
+    chunks = list(stream_answer(chain, "pergunta", results))
+
+    assert chunks == ["Resp", "osta ", "final"]
+    assert chain.received is not None
+    assert chain.received["question"] == "pergunta"
+    assert "https://a.com" in chain.received["urls"]
+
+
+def test_stream_answer_is_lazy() -> None:
+    chain = FakeStreamingChain(["x"])
+
+    generator = stream_answer(chain, "q", [])
+
+    assert chain.received is None  # nothing runs until the UI starts consuming
+    assert next(generator) == "x"

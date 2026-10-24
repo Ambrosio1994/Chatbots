@@ -10,6 +10,8 @@ busca → monta o prompt com os resultados → gera a resposta.
 - **Busca na web em tempo real** com a integração oficial `langchain-tavily`
   (`TavilySearch`, que substitui o antigo `TavilySearchResults`).
 - **Respostas com fontes** — as URLs usadas aparecem em um painel expansível.
+- **Resposta em streaming** — o texto aparece na tela enquanto é gerado, sem
+  esperar a resposta inteira.
 - **Chaves por interface ou ambiente** — informe no `.env` ou na barra lateral.
 - **Modelo e parâmetros configuráveis** — modelo, temperatura, tokens e número
   de resultados.

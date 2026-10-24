@@ -10,8 +10,13 @@ painel separado da resposta final.
 - **Execução local** — nenhuma chave de API ou dado saindo da máquina.
 - **Raciocínio visível** — o "pensamento" do modelo aparece em um painel
   expansível, separado da resposta.
+- **Streaming de raciocínio e resposta** — o raciocínio é exibido ao vivo em um
+  painel "Pensando..." que se recolhe sozinho quando a resposta começa, e a
+  resposta também aparece token a token.
 - **Compatível com vários formatos** — entende tanto o campo `reasoning_content`
-  quanto o raciocínio embutido na resposta entre `think` tags.
+  quanto o raciocínio embutido na resposta entre `think` tags (inclusive quando
+  a tag chega quebrada entre dois chunks do stream). O raciocínio dedicado só é
+  solicitado ao Ollama quando o modelo anuncia a capacidade `thinking`.
 - **Modelo configurável** — use qualquer modelo disponível no seu Ollama.
 - **Histórico de conversa** com botão para limpar.
 
