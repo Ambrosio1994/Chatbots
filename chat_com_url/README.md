@@ -11,14 +11,16 @@ e sem chave via **SearXNG**, e modelo **Anthropic Claude** (ou **Ollama** local)
 - **Memória de páginas da sessão + RAG (BM25)** — o conteúdo das páginas é salvo
   na memória da sessão ativa e, a cada pergunta, um RAG entrega ao LLM somente
   os trechos mais relevantes.
-- **Memória seletiva do usuário** — retém apenas fatos, preferências e
-  restrições do usuário (ignorando erros e blocos de raciocínio por padrão, a
-  menos que o usuário habilite na barra lateral).
+- **Modelo avaliador de memória dedicado** — um modelo separado avalia o prompt
+  do usuário e grava na memória apenas fatos, preferências e restrições
+  duráveis (ignorando erros e raciocínio automaticamente, sem controles de
+  memória na interface).
+- **Seleção de modelos LlamaIndex + modelo customizado** — o seletor traz
+  modelos do LlamaIndex (`llama3.2:1b`, `llama3.2`, `deepseek-r1:1.5b`,
+  `qwen2.5`), além de campos para digitar **Outro modelo** e **Chave da API**.
 - **Respostas com fontes** — as URLs usadas aparecem em um painel expansível.
 - **Resposta em streaming** — o texto aparece na tela enquanto é gerado, sem
   esperar a resposta inteira.
-- **Execução 100% sem chaves de API** — selecione `ollama/deepseek-r1:1.5b` na
-  barra lateral para rodar busca (SearXNG) + LLM (Ollama) localmente.
 
 ## 🏗️ Arquitetura
 

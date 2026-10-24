@@ -17,7 +17,11 @@ painel separado da resposta final.
   quanto o raciocínio embutido na resposta entre `think` tags (inclusive quando
   a tag chega quebrada entre dois chunks do stream). O raciocínio dedicado só é
   solicitado ao Ollama quando o modelo anuncia a capacidade `thinking`.
-- **Modelo configurável** — use qualquer modelo disponível no seu Ollama.
+- **Modelo padrão fixo (`deepseek-r1:1.5b`)** — configurado automaticamente sem
+  exibir o nome do modelo nem controles de memória na interface.
+- **Modelo avaliador de memória dedicado + janela enxuta** — um modelo à parte
+  avalia o prompt do usuário para registrar fatos e preferências na memória da
+  sessão, enquanto o histórico filtra 100% do raciocínio dos turnos anteriores.
 - **Histórico de conversa** com botão para limpar.
 
 ## 🏗️ Arquitetura

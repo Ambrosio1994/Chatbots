@@ -7,9 +7,9 @@ conversa e permite ajustar a criatividade das respostas em tempo real.
 ## ✨ Funcionalidades
 
 - **Respostas em streaming** — o texto aparece à medida que é gerado.
-- **Memória de conversa** — o histórico é reenviado ao modelo a cada turno.
+- **Modelo avaliador de memória dedicado + RAG (BM25)** — um modelo separado avalia o prompt do usuário e grava automaticamente apenas fatos, preferências e restrições duráveis na memória da sessão (sem exibir opções de memória na interface), recuperando os turnos mais relevantes a cada pergunta.
 - **Controle de temperatura** — slider no menu lateral (0.0 a 1.0).
-- **Seleção de modelo** — escolha entre os modelos Claude disponíveis.
+- **Seleção de modelo** — seletor com modelos do LlamaIndex (`llama3.2:1b`, `llama3.2`, `deepseek-r1:1.5b`, `qwen2.5`) e campos opcionais para informar **Outro modelo** e **Chave da API**.
 - **Limpar conversa** — reinicia a sessão com um clique.
 - **Tratamento de erros** — falhas de API são exibidas de forma amigável.
 
